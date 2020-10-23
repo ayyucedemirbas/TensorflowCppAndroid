@@ -1,4 +1,4 @@
-/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,131 +13,77 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/lite/c/c_api.h"
-#include "tensorflow/lite/c/c_api_experimental.h"
-#include "tensorflow/lite/c/common.h"
-#include "tensorflow/lite/c/builtin_op_data.h"
-
-// This file exists just to verify that the above header files above can build,
-// link, and run as "C" code.
-
-#ifdef __cplusplus
-#error "This file should be compiled as C code, not as C++."
-#endif
-
+#include <limits.h>
+#include <memory.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+#include <time.h>
+#include <unistd.h>
 
-static void CheckFailed(const char *expression, const char *filename,
-                        int line_number) {
-  fprintf(stderr, "ERROR: CHECK failed: %s:%d: %s\n", filename, line_number,
-          expression);
-  fflush(stderr);
-  abort();
+#include "tensorflow/c/c_api.h"
+#include "tensorflow/c/c_api_experimental.h"
+#include "tensorflow/c/env.h"
+#include "tensorflow/c/kernels.h"
+
+// A create function. This will never actually get called in this test, it's
+// just nice to know that it compiles.
+void* create(TF_OpKernelConstruction* ctx) {
+  TF_DataType type;
+  TF_Status* s = TF_NewStatus();
+  TF_OpKernelConstruction_GetAttrType(ctx, "foobar", &type, s);
+  TF_DeleteStatus(s);
+  return NULL;
 }
 
-// We use an extra level of macro indirection here to ensure that the
-// macro arguments get evaluated, so that in a call to CHECK(foo),
-// the call to STRINGIZE(condition) in the definition of the CHECK
-// macro results in the string "foo" rather than the string "condition".
-#define STRINGIZE(expression) STRINGIZE2(expression)
-#define STRINGIZE2(expression) #expression
-
-// Like assert(), but not dependent on NDEBUG.
-#define CHECK(condition) \
-  ((condition) ? (void)0 \
-               : CheckFailed(STRINGIZE(condition), __FILE__, __LINE__))
-#define ASSERT_EQ(expected, actual) CHECK((expected) == (actual))
-#define ASSERT_NE(expected, actual) CHECK((expected) != (actual))
-#define ASSERT_STREQ(expected, actual) \
-    ASSERT_EQ(0, strcmp((expected), (actual)))
-
-// Test the TfLiteVersion function.
-static void TestVersion(void) {
-  const char *version = TfLiteVersion();
-  printf("Version = %s\n", version);
-  CHECK(version[0] != '\0');
+// A compute function. This will never actually get called in this test, it's
+// just nice to know that it compiles.
+void compute(void* kernel, TF_OpKernelContext* ctx) {
+  TF_Tensor* input;
+  TF_Status* s = TF_NewStatus();
+  TF_GetInput(ctx, 0, &input, s);
+  TF_DeleteTensor(input);
+  TF_DeleteStatus(s);
 }
 
-static void TestSmokeTest(void) {
-  TfLiteModel* model =
-      TfLiteModelCreateFromFile("tensorflow/lite/testdata/add.bin");
-  ASSERT_NE(model, NULL);
+// Exercises tensorflow's C API.
+int main(int argc, char** argv) {
+  TF_InitMain(argv[0], &argc, &argv);
 
-  TfLiteInterpreterOptions* options = TfLiteInterpreterOptionsCreate();
-  ASSERT_NE(options, NULL);
-  TfLiteInterpreterOptionsSetNumThreads(options, 2);
+  struct TF_StringStream* s = TF_GetLocalTempDirectories();
+  const char* path;
 
-  TfLiteInterpreter* interpreter = TfLiteInterpreterCreate(model, options);
-  ASSERT_NE(interpreter, NULL);
+  if (!TF_StringStreamNext(s, &path)) {
+    fprintf(stderr, "TF_GetLocalTempDirectories returned no results\n");
+    return 1;
+  }
 
-  // The options/model can be deleted immediately after interpreter creation.
-  TfLiteInterpreterOptionsDelete(options);
-  TfLiteModelDelete(model);
+  char file_name[100];
+  time_t t = time(NULL);
+  snprintf(file_name, sizeof(file_name), "test-%d-%ld.txt", getpid(), t);
 
-  ASSERT_EQ(TfLiteInterpreterAllocateTensors(interpreter), kTfLiteOk);
-  ASSERT_EQ(TfLiteInterpreterGetInputTensorCount(interpreter), 1);
-  ASSERT_EQ(TfLiteInterpreterGetOutputTensorCount(interpreter), 1);
+  size_t length = 2 + strlen(path) + strlen(file_name);
+  char* full_path = malloc(length);
+  snprintf(full_path, length, "%s/%s", path, file_name);
 
-  int input_dims[1] = {2};
-  ASSERT_EQ(TfLiteInterpreterResizeInputTensor(
-                interpreter, 0, input_dims, 1),
-            kTfLiteOk);
-  ASSERT_EQ(TfLiteInterpreterAllocateTensors(interpreter), kTfLiteOk);
+  TF_WritableFileHandle* h;
+  TF_Status* status = TF_NewStatus();
+  TF_NewWritableFile(full_path, &h, status);
+  if (TF_GetCode(status) != TF_OK) {
+    fprintf(stderr, "TF_NewWritableFile failed: %s\n", TF_Message(status));
+    return 1;
+  }
+  fprintf(stderr, "wrote %s\n", full_path);
+  free(full_path);
+  TF_CloseWritableFile(h, status);
+  if (TF_GetCode(status) != TF_OK) {
+    fprintf(stderr, "TF_CloseWritableFile failed: %s\n", TF_Message(status));
+  }
+  TF_StringStreamDone(s);
 
-  TfLiteTensor* input_tensor = TfLiteInterpreterGetInputTensor(interpreter, 0);
-  ASSERT_NE(input_tensor, NULL);
-  ASSERT_EQ(TfLiteTensorType(input_tensor), kTfLiteFloat32);
-  ASSERT_EQ(TfLiteTensorNumDims(input_tensor), 1);
-  ASSERT_EQ(TfLiteTensorDim(input_tensor, 0), 2);
-  ASSERT_EQ(TfLiteTensorByteSize(input_tensor), sizeof(float) * 2);
-  ASSERT_NE(TfLiteTensorData(input_tensor), NULL);
-  ASSERT_STREQ(TfLiteTensorName(input_tensor), "input");
+  TF_KernelBuilder* b =
+      TF_NewKernelBuilder("SomeOp", "SomeDevice", &create, &compute, NULL);
+  TF_RegisterKernelBuilder("someKernel", b, status);
 
-  TfLiteQuantizationParams input_params =
-      TfLiteTensorQuantizationParams(input_tensor);
-  ASSERT_EQ(input_params.scale, 0.f);
-  ASSERT_EQ(input_params.zero_point, 0);
-
-  float input[2] = {1.f, 3.f};
-  ASSERT_EQ(TfLiteTensorCopyFromBuffer(input_tensor, input,
-                                       2 * sizeof(float)),
-            kTfLiteOk);
-
-  ASSERT_EQ(TfLiteInterpreterInvoke(interpreter), kTfLiteOk);
-
-  const TfLiteTensor* output_tensor =
-      TfLiteInterpreterGetOutputTensor(interpreter, 0);
-  ASSERT_NE(output_tensor, NULL);
-  ASSERT_EQ(TfLiteTensorType(output_tensor), kTfLiteFloat32);
-  ASSERT_EQ(TfLiteTensorNumDims(output_tensor), 1);
-  ASSERT_EQ(TfLiteTensorDim(output_tensor, 0), 2);
-  ASSERT_EQ(TfLiteTensorByteSize(output_tensor), sizeof(float) * 2);
-  ASSERT_NE(TfLiteTensorData(output_tensor), NULL);
-  ASSERT_STREQ(TfLiteTensorName(output_tensor), "output");
-
-  TfLiteQuantizationParams output_params =
-      TfLiteTensorQuantizationParams(output_tensor);
-  ASSERT_EQ(output_params.scale, 0.f);
-  ASSERT_EQ(output_params.zero_point, 0);
-
-  float output[2];
-  ASSERT_EQ(TfLiteTensorCopyToBuffer(output_tensor, output,
-                                     2 * sizeof(float)),
-            kTfLiteOk);
-  ASSERT_EQ(output[0], 3.f);
-  ASSERT_EQ(output[1], 9.f);
-
-  TfLiteInterpreterDelete(interpreter);
-}
-
-static void RunTests(void) {
-  TestVersion();
-  TestSmokeTest();
-}
-
-int main(void) {
-  RunTests();
+  TF_DeleteStatus(status);
   return 0;
 }
