@@ -11,11 +11,11 @@ Java_com_example_tfcpp_MainActivity_stringFromJNI(
         JNIEnv* env,
         jobject /* this */) {
     const char *path = "/home/ayyuce/Desktop/model.tflite";
+    TfLiteInterpreterOptions* options = TfLiteInterpreterOptionsCreate();
     TfLiteModel * model = TfLiteModelCreateFromFile(path);
-    /*TfLiteInterpreter * interpreter = TfLiteInterpreterCreate(model);
-    TfLiteInterpreterAllocateTensors(interpreter);
-    TfLiteTensor * input_tensor =
-            TfLiteInterpreterGetInputTensor(interpreter, 0);
+    TfLiteInterpreter * interpreter = TfLiteInterpreterCreate(model, options);
+    //TfLiteInterpreterAllocateTensors(interpreter); //there is a problem with this line, if u uncomment it, the app crashes
+    /*TfLiteTensor * input_tensor = TfLiteInterpreterGetInputTensor(interpreter, 0);
     const TfLiteTensor * output_tensor =
             TfLiteInterpreterGetOutputTensor(interpreter, 0);
     TfLiteStatus from_status = TfLiteTensorCopyFromBuffer(
